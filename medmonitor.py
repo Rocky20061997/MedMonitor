@@ -7,6 +7,8 @@ from datetime import datetime
 def setup_database():
     conn = sqlite3.connect('medmonitor.db')
     cursor = conn.cursor()
+
+    # Create 'users' and 'medications' tables if they do not exist
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
@@ -18,8 +20,27 @@ def setup_database():
                         dose TEXT NOT NULL,
                         timing TEXT NOT NULL,
                         FOREIGN KEY(user_id) REFERENCES users(id))''')
+
+    # Add new columns to 'medications' table
+    # Use PRAGMA table_info to check if columns exist
+    cursor.execute("PRAGMA table_info(medications)")
+    columns = [info[1] for info in cursor.fetchall()]  # Extract column names
+
+    if 'inventory_count' not in columns:
+        cursor.execute('ALTER TABLE medications ADD COLUMN inventory_count INTEGER DEFAULT 0')
+
+    if 'last_taken' not in columns:
+        cursor.execute('ALTER TABLE medications ADD COLUMN last_taken TEXT')
+
+    if 'refill_threshold' not in columns:
+        cursor.execute('ALTER TABLE medications ADD COLUMN refill_threshold INTEGER DEFAULT 5')
+
     conn.commit()
     conn.close()
+
+if __name__ == "__main__":
+    setup_database()
+
 
 # Adding a new user profile
 def add_user(name, age):
