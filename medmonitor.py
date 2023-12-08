@@ -7,8 +7,6 @@ from datetime import datetime
 def setup_database():
     conn = sqlite3.connect('medmonitor.db')
     cursor = conn.cursor()
-
-    # Create 'users' and 'medications' tables if they do not exist
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
@@ -19,28 +17,12 @@ def setup_database():
                         medication_name TEXT NOT NULL,
                         dose TEXT NOT NULL,
                         timing TEXT NOT NULL,
+                        inventory_count INTEGER DEFAULT 0,
+                        last_taken TEXT,
+                        refill_threshold INTEGER DEFAULT 5,
                         FOREIGN KEY(user_id) REFERENCES users(id))''')
-
-    # Add new columns to 'medications' table
-    # Use PRAGMA table_info to check if columns exist
-    cursor.execute("PRAGMA table_info(medications)")
-    columns = [info[1] for info in cursor.fetchall()]  # Extract column names
-
-    if 'inventory_count' not in columns:
-        cursor.execute('ALTER TABLE medications ADD COLUMN inventory_count INTEGER DEFAULT 0')
-
-    if 'last_taken' not in columns:
-        cursor.execute('ALTER TABLE medications ADD COLUMN last_taken TEXT')
-
-    if 'refill_threshold' not in columns:
-        cursor.execute('ALTER TABLE medications ADD COLUMN refill_threshold INTEGER DEFAULT 5')
-
     conn.commit()
     conn.close()
-
-if __name__ == "__main__":
-    setup_database()
-
 
 # Adding a new user profile
 def add_user(name, age):
@@ -52,23 +34,48 @@ def add_user(name, age):
     messagebox.showinfo("Success", "User profile added successfully.")
 
 # Adding a new medication
-def add_medication(user_id, medication_name, dose, timing):
+def add_medication(user_id, medication_name, dose, timing, inventory_count, refill_threshold):
     conn = sqlite3.connect('medmonitor.db')
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO medications (user_id, medication_name, dose, timing) VALUES (?, ?, ?, ?)', 
-                   (user_id, medication_name, dose, timing))
+    cursor.execute('INSERT INTO medications (user_id, medication_name, dose, timing, inventory_count, refill_threshold) VALUES (?, ?, ?, ?, ?, ?)',
+                   (user_id, medication_name, dose, timing, inventory_count, refill_threshold))
     conn.commit()
     conn.close()
     messagebox.showinfo("Success", "Medication added successfully.")
 
-# Retrieve all medications for a user
-def get_medications(user_id):
-    conn = sqlite3.connect('medmonitor.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM medications WHERE user_id = ?', (user_id,))
-    medications = cursor.fetchall()
-    conn.close()
-    return medications
+# Updated Medication Form
+def medication_form():
+    medication_window = tk.Toplevel()
+    medication_window.title("Add/Update Medication")
+
+    tk.Label(medication_window, text="User ID").grid(row=0, column=0)
+    tk.Label(medication_window, text="Medication Name").grid(row=1, column=0)
+    tk.Label(medication_window, text="Dose").grid(row=2, column=0)
+    tk.Label(medication_window, text="Timing").grid(row=3, column=0)
+    tk.Label(medication_window, text="Inventory Count").grid(row=4, column=0)
+    tk.Label(medication_window, text="Refill Threshold").grid(row=5, column=0)
+
+    user_id_entry = tk.Entry(medication_window)
+    medication_name_entry = tk.Entry(medication_window)
+    dose_entry = tk.Entry(medication_window)
+    timing_entry = tk.Entry(medication_window)
+    inventory_count_entry = tk.Entry(medication_window)
+    refill_threshold_entry = tk.Entry(medication_window)
+
+    user_id_entry.grid(row=0, column=1)
+    medication_name_entry.grid(row=1, column=1)
+    dose_entry.grid(row=2, column=1)
+    timing_entry.grid(row=3, column=1)
+    inventory_count_entry.grid(row=4, column=1)
+    refill_threshold_entry.grid(row=5, column=1)
+
+    tk.Button(medication_window, text="Add/Update Medication", 
+              command=lambda: add_medication(user_id_entry.get(), 
+                                             medication_name_entry.get(), 
+                                             dose_entry.get(), 
+                                             timing_entry.get(),
+                                             inventory_count_entry.get(),
+                                             refill_threshold_entry.get())).grid(row=6, column=0, columnspan=2)
 
 # User profile form
 def user_profile_form():
@@ -86,29 +93,52 @@ def user_profile_form():
 
     tk.Button(user_window, text="Add Profile", command=lambda: add_user(name_entry.get(), age_entry.get())).grid(row=2, column=0, columnspan=2)
 
-# Medication form
-def medication_form():
-    medication_window = tk.Toplevel()
-    medication_window.title("Add Medication")
 
-    tk.Label(medication_window, text="User ID").grid(row=0, column=0)
-    tk.Label(medication_window, text="Medication Name").grid(row=1, column=0)
-    tk.Label(medication_window, text="Dose").grid(row=2, column=0)
-    tk.Label(medication_window, text="Timing").grid(row=3, column=0)
+# Function to update inventory and record dose action
+def update_inventory_and_record_dose(medication_id, action, inventory_change):
+    conn = sqlite3.connect('medmonitor.db')
+    cursor = conn.cursor()
 
-    user_id_entry = tk.Entry(medication_window)
-    medication_name_entry = tk.Entry(medication_window)
-    dose_entry = tk.Entry(medication_window)
-    timing_entry = tk.Entry(medication_window)
+    # Update inventory count
+    if action == "taken":
+        cursor.execute('UPDATE medications SET inventory_count = inventory_count - ? WHERE id = ?', (inventory_change, medication_id))
+    
+    # Record the action in medication history
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''INSERT INTO medication_history (medication_id, action, action_time)
+                      VALUES (?, ?, ?)''', (medication_id, action, now))
 
-    user_id_entry.grid(row=0, column=1)
-    medication_name_entry.grid(row=1, column=1)
-    dose_entry.grid(row=2, column=1)
-    timing_entry.grid(row=3, column=1)
+    # Check and notify for refill if needed
+    cursor.execute('SELECT inventory_count, refill_threshold FROM medications WHERE id = ?', (medication_id,))
+    inventory_count, refill_threshold = cursor.fetchone()
+    if inventory_count <= refill_threshold:
+        messagebox.showinfo("Refill Reminder", f"Medication ID {medication_id} inventory is low. Consider refilling.")
 
-    tk.Button(medication_window, text="Add Medication", 
-              command=lambda: add_medication(user_id_entry.get(), medication_name_entry.get(), 
-                                             dose_entry.get(), timing_entry.get())).grid(row=4, column=0, columnspan=2)
+    conn.commit()
+    conn.close()
+
+# Function triggered when a medication is selected
+def on_medication_selected(event, user_list, medication_list):
+    selected_item = medication_list.selection()[0]
+    medication_id = medication_list.item(selected_item, 'values')[0]
+    dose_tracking_form(medication_id)
+
+# Dose Tracking Form
+def dose_tracking_form(medication_id):
+    dose_window = tk.Toplevel()
+    dose_window.title("Dose Tracking")
+
+    # Button for dose taken
+    tk.Button(dose_window, text="Dose Taken", command=lambda: update_inventory_and_record_dose(medication_id, "taken", 1)).pack()
+
+    # Button for dose postponed
+    tk.Button(dose_window, text="Dose Postponed", command=lambda: update_inventory_and_record_dose(medication_id, "postponed", 0)).pack()
+
+    # Button for dose skipped
+    tk.Button(dose_window, text="Dose Skipped", command=lambda: update_inventory_and_record_dose(medication_id, "skipped", 0)).pack()
+
+    # Close button
+    tk.Button(dose_window, text="Close", command=dose_window.destroy).pack()
 
 # Check for medication reminders
 def check_reminders():
@@ -124,6 +154,31 @@ def check_reminders():
             messagebox.showinfo("Medication Reminder", f"It's time for user {user_id} to take their {medication_name}.")
     
     window.after(60000, check_reminders)
+
+# Retrieve all medications for a user
+def get_medications(user_id):
+    conn = sqlite3.connect('medmonitor.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM medications WHERE user_id = ?', (user_id,))
+    medications = cursor.fetchall()
+    conn.close()
+    return medications
+
+# Display user's medications with a button to track doses
+def display_user_medications(event, user_list, medication_list):
+    selected_item = user_list.selection()[0]
+    user_id = user_list.item(selected_item)['values'][0]
+    medications = get_medications(user_id)
+
+    for i in medication_list.get_children():
+        medication_list.delete(i)
+    for medication in medications:
+        medication_list.insert('', 'end', values=(medication[2], medication[3], medication[4], medication[5], medication[6], medication[7]))
+
+        # Button to open dose tracking form for each medication
+        dose_button = tk.Button(medication_list, text="Track Dose", command=lambda m_id=medication[0]: dose_tracking_form(m_id))
+        medication_list.window_create('end', window=dose_button)
+        medication_list.insert('', 'end', '')
 
 # Search for a user
 def search_users(search_query, user_list):
@@ -141,27 +196,17 @@ def update_user_list(users, user_list):
     for user in users:
         user_list.insert('', 'end', values=user)
 
-# Display user's medications
-def display_user_medications(event, user_list, medication_list):
-    selected_item = user_list.selection()[0]
-    user_id = user_list.item(selected_item)['values'][0]
-    medications = get_medications(user_id)
-
-    for i in medication_list.get_children():
-        medication_list.delete(i)
-    for medication in medications:
-        medication_list.insert('', 'end', values=(medication[2], medication[3], medication[4]))
-
 # Open search window
 def open_search_window():
     search_window = tk.Toplevel()
     search_window.title("Search Users")
-    search_window.geometry("600x400")
+    search_window.geometry("800x400")
 
     tk.Label(search_window, text="Search User:").pack(pady=5)
     search_entry = tk.Entry(search_window)
     search_entry.pack(pady=5)
     tk.Button(search_window, text="Search", command=lambda: search_users(search_entry.get(), user_list)).pack(pady=5)
+   
 
     # User list
     user_list = ttk.Treeview(search_window, columns=(1, 2, 3), show="headings", height=5)
@@ -169,14 +214,17 @@ def open_search_window():
     user_list.heading(1, text="ID")
     user_list.heading(2, text="Name")
     user_list.heading(3, text="Age")
-    
-    # Medication list
+
+    # Medication list with new columns
     tk.Label(search_window, text="User Medications:").pack(pady=5)
-    medication_list = ttk.Treeview(search_window, columns=(1, 2, 3), show="headings", height=5)
+    medication_list = ttk.Treeview(search_window, columns=(1, 2, 3, 4, 5, 6), show="headings", height=5)
     medication_list.pack()
     medication_list.heading(1, text="Medication Name")
     medication_list.heading(2, text="Dose")
     medication_list.heading(3, text="Timing")
+    medication_list.heading(4, text="Inventory Count")
+    medication_list.heading(5, text="Last Taken")
+    medication_list.heading(6, text="Refill Threshold")
 
     user_list.bind('<<TreeviewSelect>>', lambda event: display_user_medications(event, user_list, medication_list))
 
